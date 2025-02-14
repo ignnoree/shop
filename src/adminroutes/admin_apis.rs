@@ -1,9 +1,5 @@
 use axum::{
-    extract::{Query, State},
-    http::{response, HeaderMap},
-    response::{IntoResponse, Response},
-    routing::{get, post},
-    Json, Router,
+    extract::{Query, State}, handler::Handler, http::{response, HeaderMap}, response::{IntoResponse, Response}, routing::{get, post}, Extension, Json, Router
 };
 use crate::strs::get_jwt_identity;
 
@@ -12,14 +8,16 @@ use chrono::{Duration, Utc};
 use hyper::StatusCode;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde_json::{json, Value,to_string};
+use sqlx::{sqlite::SqlitePool, Sqlite};
 
 use crate::strs::Claims;
-use rusqlite::{params, Connection, Result};
-pub fn admin_routes_add_products() -> Router {
-    Router::new().route("/api/admin/add_Products", post(add_products))
+
+pub fn admin_routes_add_products(pool:SqlitePool) -> Router {
+    Router::new().route("/api/admin/add_Products", post(add_products.layer(Extension(pool.clone())))
+    )
 }
-pub fn admin_routes_add_categorys() -> Router {
-    Router::new().route("/api/admin/add_category", post(add_category))
+pub fn admin_routes_add_categorys(pool:SqlitePool) -> Router {
+    Router::new().route("/api/admin/add_category", post(add_category.layer(Extension(pool.clone()))))
 }
 
 
@@ -28,57 +26,42 @@ use crate::strs::Product;
 use crate::errors::{Error};
 
 #[axum::debug_handler]
-async fn add_products(headers: HeaderMap,payload: Json<Product>) -> Result<Json<Value>, Error> {
+async fn add_products(Extension(pool):Extension<SqlitePool>,headers: HeaderMap,payload: Json<Product>) -> Result<Json<Value>, Error> {
     let identity = get_jwt_identity(headers)
         .await
-        .map_err(|_| Error::UNAUTHORIZED)?;
+        .map_err(|_| Error:: Unauthorized)?;
 
     let role = identity
     .get("role") //
     .and_then(|v| v.as_str())
-    .ok_or(Error::UNAUTHORIZED)?; 
+    .ok_or(Error:: Unauthorized)?; 
 
     if role != "admin"{
-        return Err(Error::UNAUTHORIZED);
+        return Err(Error:: Unauthorized);
         
     }  
-    let product = Product{ 
-        product_name:payload.product_name.clone(),
-        product_description:payload.product_description.clone(),
-        product_price:payload.product_price,
-        product_quantity:payload.product_quantity,
-        product_category_id:payload.product_category_id,
-
-    };
-
-
-    let connection = Connection::open("database.db").map_err(|e| {
-        println!("Failed to open database connection: {:?}", e);
-        Error::InternalServerError
-    })?;
-    println!("Connected to database");
+    
+    let product_name=payload.product_name.clone();
+    let product_description=payload.product_description.clone();
+    let product_price=payload.product_price.clone();
+    let product_quantity=payload.product_quantity.clone();
+    let product_category_id=payload.product_category_id.clone();
+    
 
 
 
-    let query = "INSERT INTO Products (Name, Description, Price, StockQuantity, CategoryID) VALUES (?1, ?2, ?3, ?4, ?5)";
-    match connection.execute(
-        query,
-        rusqlite::params![
-            &product.product_name,
-            &product.product_description,
-            &product.product_price,
-            &product.product_quantity,
-            &product.product_category_id,
-        ],
-    ) {
-        Ok(_) => Ok(Json(json!({"message": "Product Added"}))),
-        Err(e) => {
-            // Print the error and return it wrapped in a JSON response
-            println!("Error executing query: {}", e);
-            Err(Error::InternalServerError)
-        }
+    
+    let execute=sqlx::query!("INSERT INTO Products (Name, Description, Price, StockQuantity, CategoryID) VALUES (?, ?, ?, ?, ?)",product_name,product_description,product_price,product_quantity,product_category_id) 
+    .fetch_one(&pool)
+    .await;
+    Ok(Json(json!({"message": "executed"})))
+    
+            
     } 
-}
+
+
+
+
 
 
 #[derive(Debug,Deserialize)]
@@ -88,43 +71,32 @@ struct Category{
 
 }
 
+
+
+
 #[axum::debug_handler]
-async fn add_category(headers: HeaderMap,payload: Json<Category>) -> Result<Json<Value>, Error> {
+async fn add_category(Extension(pool):Extension<SqlitePool>,headers: HeaderMap,payload: Json<Category>) -> Result<Json<Value>, Error> {
     let identity = get_jwt_identity(headers)
         .await
-        .map_err(|_| Error::UNAUTHORIZED)?;
+        .map_err(|_| Error:: Unauthorized)?;
 
     let role = identity
     .get("role") //
     .and_then(|v| v.as_str())
-    .ok_or(Error::UNAUTHORIZED)?; 
+    .ok_or(Error:: Unauthorized)?; 
 
     if role != "admin"{
-        return Err(Error::UNAUTHORIZED);
+        return Err(Error:: Unauthorized);
     }  
-    let category = Category{ 
-        category_name:payload.category_name.clone(),
-        parent_category_id:payload.parent_category_id.clone(),
-    };
-    let connection = Connection::open("database.db").map_err(|e| {
-        println!("Failed to open database connection: {:?}", e);
-        Error::InternalServerError
-    })?;
-    println!("Connected to database");
-    let query="INSERT INTO Categories (CategoryName, ParentCategoryID) VALUES (?1, ?2)";
-    match connection.execute(
-        query,
-        rusqlite::params![
-            &category.category_name,
-            &category.parent_category_id, 
-        ],
-    ) {
-        Ok(_) => Ok(Json(json!({"message": "Category Added"}))),
-        Err(e) => {
-            // Print the error and return it wrapped in a JSON response
-            println!("Error executing query: {}", e);
-            Err(Error::InternalServerError)
+    
+    let categoryname= payload.category_name.clone();
+    let parentcategoryid=payload.parent_category_id.clone();
+    
+    let execute=sqlx::query!("INSERT INTO Categories (CategoryName, ParentCategoryID) VALUES (?, ?)",categoryname,parentcategoryid).execute(&pool).await; 
+    {
+    Ok(Json(json!({"message": "Category Added"})))
+
         }
     } 
-}
+
 

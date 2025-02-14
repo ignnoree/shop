@@ -1,6 +1,6 @@
 
 use std::{f32::consts::E, result};
-
+use std::convert::TryInto;
 use serde::{Deserialize, Serialize};
 use axum::{
     extract::State,
@@ -9,13 +9,13 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use rusqlite::{params, Connection, Result};
+use crate::db::create_connection_pool;
 use chrono::{Duration, Utc};
 use hyper::StatusCode;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde_json::{json, Value,to_string};
 use tokio::net::windows::named_pipe;
-
+use sqlx::sqlite::SqlitePool;
 #[derive(Debug,Deserialize)]
 pub struct LoginPayload{
     pub username:String,
@@ -30,7 +30,7 @@ pub struct LoginResponse{
 
 #[derive(Debug,Serialize,Deserialize)]
 pub struct Claims{
-    pub user_id:i32,
+    pub user_id:i64,
     pub sub:String,
     pub exp:usize,
     pub role:String,
@@ -94,46 +94,73 @@ pub struct ReviewPayload{
     pub review:String,
 }
 
-pub async fn generate_tokens(username: &str) -> (String, String) {
+pub async fn generate_tokens(username: &str, pool:&SqlitePool) -> (String, String) {
+   
     let secret = b"secret";
     let refresh_secret = b"secret";
-    let connection=Connection::open("database.db").unwrap();
-    let query = "SELECT * FROM admins WHERE user_id = ?1";
-    let query2:&str="select userid from users where username = ?1";
-    let mut statement = connection.prepare(query).unwrap();
-    let mut statement2 = connection.prepare(query2).unwrap();
-    let user_id:i32 =statement2.query_row(params![username], |row| row.get(0)).unwrap();
-    
-    let exists = statement.exists(params![user_id]).unwrap();
-    println!("exists: {}", exists);
-    let role = if exists{
-        "admin"
-    }
-    else{
-        "user"
+
+   
+    let mut conn = pool.acquire().await.expect("Failed to acquire connection");
+
+   
+    let user_id_result = sqlx::query!("SELECT userid FROM users WHERE username = ? ", username).fetch_optional(pool)
+    .await;
+
+    let user_id = match user_id_result {
+        Ok(Some(record)) => record.UserID,  
+        Ok(None) => {
+            eprintln!("User not found");
+            return ("".to_string(), "".to_string());  
+        }
+        Err(e) => {
+            eprintln!("Error retrieving user_id: {:?}", e);
+            return ("".to_string(), "".to_string()); 
+        }
     };
+    
+
+    let is_admin_result = sqlx::query!("SELECT id FROM admins WHERE user_id = ?", user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            eprintln!("Failed to execute query: {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        });
+
+    
+
+        let role = match is_admin_result {
+            Ok(Some(_)) => "admin",  // User is an admin
+            Ok(None) => "user",      // User is a regular user
+            Err(_) => "user",        // Default role in case of error
+        };
+    
     let access_claims = Claims {
-        user_id:user_id,
-        sub:username.to_string(),
-        exp: (Utc::now() + Duration::minutes(15)).timestamp() as usize, // 15 min
+        user_id: user_id.expect("User ID should be present"),
+        sub: username.to_string(),
+        exp: (Utc::now() + Duration::minutes(15)).timestamp() as usize, // 15 minutes expiry
         role: role.to_string(),
     };
 
     let refresh_claims = Claims {
-        user_id:user_id,
+        user_id: user_id.expect("User ID should be present"),
         sub: username.to_string(),
-        exp: (Utc::now() + Duration::days(7)).timestamp() as usize, // 7 days
+        exp: (Utc::now() + Duration::days(7)).timestamp() as usize, // 7 days expiry
         role: role.to_string(),
     };
 
-    let access_token = encode(&Header::default(), &access_claims, &EncodingKey::from_secret(secret)).unwrap();
-    let refresh_token = encode(&Header::default(), &refresh_claims, &EncodingKey::from_secret(refresh_secret)).unwrap();
+    // Encode tokens
+    let access_token = encode(&Header::default(), &access_claims, &EncodingKey::from_secret(secret))
+        .expect("Token encoding failed");
+    let refresh_token = encode(&Header::default(), &refresh_claims, &EncodingKey::from_secret(refresh_secret))
+        .expect("Token encoding failed");
 
     (access_token, refresh_token)
 }
 
 
-pub async fn check_admin(headers: HeaderMap) -> Result<bool, StatusCode> {
+
+pub async fn check_admin(headers: HeaderMap, pool: &SqlitePool) -> Result<bool, StatusCode> {
     let identity = get_jwt_identity(headers)
         .await
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
@@ -142,13 +169,12 @@ pub async fn check_admin(headers: HeaderMap) -> Result<bool, StatusCode> {
         .get("sub") //
         .and_then(|v| v.as_str())
         .ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_id = identity.get("user_id").and_then(|i| i.as_i64()).ok_or(StatusCode::UNAUTHORIZED)? as i32;
 
-        let connection = Connection::open("database.db").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let query = "SELECT * FROM admin WHERE Username = ?1";
-        let mut statement = connection.prepare(query).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let exists = statement.exists(params![sub]).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        let exists = sqlx::query!("select id from admins where user_id = ? ",user_id).fetch_optional(pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         
-        if exists{
+        if exists.is_some(){
             Ok((true))
         }
         else{
@@ -161,40 +187,43 @@ pub struct CartPayload{
     pub quantity:i32,
 }
 
+use sqlx::Row;
+
+pub async fn get_products_by_category(pool: &SqlitePool, category: &str) -> Result<Vec<serde_json::Value>, StatusCode> {
+    let query = "SELECT * FROM products WHERE category = ?"; // Replace with your actual query
+
+    // Execute query with pool and map rows to JSON
+    let products = sqlx::query(query)
+        .bind(category)  // Bind category parameter to the query
+        .fetch_all(pool) // Execute the query using the pool
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?; // Handle errors
+
+    // Map each row into a JSON object
+    let result: Vec<serde_json::Value> = products.into_iter().map(|row| {
+        json!({
+            "id": row.get::<i32, _>("id"),
+            "name": row.get::<String, _>("name"),
+            "price": row.get::<f64, _>("price"),
+            "category": row.get::<String, _>("category"),
+        })
+    }).collect();
+
+    Ok(result)
+}
 
 
-
-pub async fn query_prods_by_category(category:&str)->Result<Json<serde_json::Value>, StatusCode>{
-    let connection = Connection::open("database.db").map_err(|e| {
-        println!("Failed to open database connection: {:?}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    println!("Connected to database");
-
-    let mut stmt = connection.prepare("SELECT * FROM products WHERE categoryid = (SELECT categoryid FROM categories WHERE categoryname = ?)").map_err(|e| {
-        println!("Failed to prepare query: {:?}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    let products = stmt.query_map(params![&category], |row| {
-        Ok(json!({
-            "product_id": row.get::<_, i32>(0)?,
-            "product_name": row.get::<_, String>(1)?,
-            "product_description": row.get::<_, String>(2)?,
-            "product_price": row.get::<_, f64>(3)?,
-            "product_category_id": row.get::<_, i32>(4)?,
-            "product_quantity": row.get::<_, i32>(5)?,
-            
-        }))
-    }).map_err(|e| {
-        println!("Failed to execute query: {:?}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    let mut products_json = Vec::new();
-    for product in products {
-        products_json.push(product.map_err(|e| {
-            println!("Failed to get product: {:?}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?);
-    }
-    Ok(Json(json!({"products": products_json})))
+#[derive(Debug, Deserialize)]
+pub struct SignupPayload{
+    pub username:String,
+    pub password:String,
+    pub email:String,
+    pub first_name:String,
+    pub last_name:String,
+    pub address:String,
+    pub city :String,
+    pub state:String,
+    pub zipcode:String,
+    pub country :String,
+    pub phonenumber:String
 }
