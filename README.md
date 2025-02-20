@@ -1,1 +1,1 @@
-Welcome to the chaos – code so messy, it could be its own programming language
+Shop backend? Check. Payment logic? Missing. Clean code? Not so much
