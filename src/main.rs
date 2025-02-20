@@ -7,7 +7,7 @@ use axum::{
     routing::get,
     Router,
 };
-use tower_http::services::ServeDir; // ✅ Import ServeDir for serving static files
+use tower_http::services::ServeDir; // 
 use axum::routing::get_service;
 use crate::db::create_connection_pool;
 
