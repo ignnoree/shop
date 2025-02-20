@@ -84,7 +84,7 @@ async fn profile_handler(
   let user_id = identity.get("user_id")
       .ok_or(StatusCode::UNAUTHORIZED)?;
 
-  // Use query_as! with explicit column selection
+  
   let user = sqlx::query_as!(
       UserRecord,
       r#"SELECT UserID as user_id,
