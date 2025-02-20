@@ -33,9 +33,9 @@ async fn main() {
     .merge(adminroutes::admin_apis::admin_routes_add_categorys(pool.clone()))
     .merge(web::routes_home::home_routes(pool.clone()))
     .merge(web::routes_categorys::category_routes(pool.clone()))
-    //.merge(web::routes_reviews::routes_reviews())
     .merge(web::routes_cart::cart_routes(pool.clone()))
-    .merge(users::routes_profile::routes_profile_handler(pool.clone()));
+    .merge(users::routes_profile::routes_profile_handler(pool.clone()))
+    .merge(web::routes_reviews::reviews_routes(pool.clone()));
 
 
 
