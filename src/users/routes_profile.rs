@@ -8,7 +8,7 @@ use serde_json::json;
 use serde_json::Value;
 use axum::http::StatusCode;
 use crate::strs::get_jwt_identity;
-use axum::routing::{get,post};
+use axum::routing::{get,post,delete};
 use sqlx::query;
 use chrono::{DateTime, Utc};
 use chrono::NaiveDateTime;
@@ -18,6 +18,7 @@ pub fn routes_profile_handler(pool:SqlitePool)->Router{
     Router::new()
     .route("/api/profile",post(update_profile))
     .route("/api/profile",get(profile_handler))
+    .route("/api/profile",delete(delete_profile))
     .layer(Extension(pool.clone()))
 
 }
@@ -182,3 +183,32 @@ async fn update_profile(header:HeaderMap,
             }
         
     
+
+
+
+async fn delete_profile(header:HeaderMap,Extension(pool): Extension<SqlitePool>)
+->Result<Json<serde_json::Value>,StatusCode>
+{
+
+    let idenity=get_jwt_identity(header).await
+    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let user_id=idenity.get("user_id").ok_or(StatusCode::UNAUTHORIZED)?;
+    println!("{}",user_id);
+
+    sqlx::query!("delete from reviews where userid = ?",user_id).execute(&pool).await.
+    map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+
+    //
+    
+    sqlx::query!("delete from users where userid = ?",user_id).execute(&pool).await.
+    map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+            
+
+
+
+    Ok(Json(json!({"msg":"user successfully deleted ! "})))
+
+
+
+}   

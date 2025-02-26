@@ -22,34 +22,43 @@ pub fn routes(pool:SqlitePool)->Router{
 }
 
 
-
+use sqlx::sqlite::SqliteError;
+use sqlx::Error as SqlxError;
 
 #[axum::debug_handler]
 pub async fn api_signup(
     Extension(pool): Extension<SqlitePool>,
     payload: Json<SignupPayload>,
 ) -> Result<Json<Value>, Error> {
-    // Check if the username already exists
+    
     let query = sqlx::query!("SELECT COUNT(*) AS count FROM Users WHERE Username = ?", payload.username)
         .fetch_one(&pool)
         .await
-        .map_err(|_| Error::InternalServerError)?; // Handle error if query fails
+        .map_err(|_| Error::InternalServerError)?; 
 
-    // If the count is greater than 0, the user already exists
+    
     if query.count > 0 {
         return Err(Error::UserAlreadyExists);
-    } else {
-        println!("User does not exist, proceeding with signup...");
-    }
+    } 
 
-    // Hash the password
+
+    let query = sqlx::query!("SELECT COUNT(*) AS count FROM Users WHERE email = ?", payload.email)
+        .fetch_one(&pool)
+        .await
+        .map_err(|_| Error::InternalServerError)?; 
+
+    
+    if query.count > 0 {
+        return Err(Error::UserAlreadyExists);
+    } 
+
     let password_hash = hash_password(&payload.password);
 
-    // Insert the new user into the database
+    
     let query = "INSERT INTO Users (Username, PasswordHash, Email, FirstName, LastName, Address, City, State, Zipcode, Country, PhoneNumber) 
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
-    sqlx::query(query)
+    let res =sqlx::query(query)
         .bind(&payload.username)
         .bind(&password_hash)
         .bind(&payload.email)
