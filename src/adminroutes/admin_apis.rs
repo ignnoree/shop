@@ -20,7 +20,8 @@ pub fn admin_routes(pool:SqlitePool) -> Router {
     Router::new()
     .route("/api/admin/Product",  delete(add_category))
     .route("/api/admin/Product", post(add_products))
-    .route("/api/admin/add/admin", post(add_admin))
+    .route("/api/admin/admins", post(add_admin))
+    .route("/api/admin/admins", delete(delete_admin))
     .route("/api/admin/user",  delete(delete_user))
     .route("/api/admin/category",  post(add_category))
     .route("/api/admin/category",  delete(delete_category))
@@ -66,12 +67,31 @@ async fn delete_admin(header:HeaderMap,Extension(pool):Extension<SqlitePool>,pay
     }
     let username = &payload.username;
 
-    sqlx::query!("delete from admins where user_id = (select userid from users where username = ? )",username)
-    .execute(&pool).await.map_err(|_| Error::InternalServerError);
+    let check_role =sqlx::query!("select role from admins where user_id = (select userid from users where username = ?)",username)
+    .fetch_one(&pool)
+    .await
+    .map_err(|_| Error::InternalServerError)?;
 
-    Ok(Json(json!({"msg":"msg"})))
+    let role = check_role.role;
+    match role{
+        Some(role)=>{
 
-}
+            if role == "admin"{
+                return Err(Error::Unauthorized);
+            }
+            sqlx::query!("delete from admins where user_id = (select userid from users where username = ?)",username)
+            .execute(&pool)
+            .await
+            .map_err(|_| Error::InternalServerError)?;
+            return Ok(Json(json!({"msg":"admin removed"})))   
+        }
+        None=>{
+            Err(Error::UserIsNotAdmin)
+        }
+
+    }
+    }
+
 
 
 

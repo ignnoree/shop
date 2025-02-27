@@ -18,6 +18,7 @@ use tokio::time::error::Elapsed;
 use crate::strs::get_jwt_identity;
 use axum::handler::Handler;
 
+
 pub fn reviews_routes(pool: SqlitePool) -> Router {
     Router::new()
         .route("/api/{id}/reviews", get(get_reviews))
@@ -143,18 +144,9 @@ async fn delete_reviews(Extension(pool):Extension<SqlitePool> , Path(id):Path<St
                 }
 
             }
-
-
-
-
-
             None =>{ 
                 Err(StatusCode::UNAUTHORIZED)
             }
-                
-            
-
-
 
         } 
     }

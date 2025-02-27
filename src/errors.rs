@@ -12,15 +12,14 @@ pub enum Error {
     UserAlreadyExists,
     InternalServerError,
     Unauthorized,
-    //UNAUTHORIZED,
-
+    UserIsNotAdmin,
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error:: Unauthorized => write!(f, "Unauthorized"),
-    
+            Error::UserIsNotAdmin=>write!(f,"User is not a admin or doest exists"),
             Error::UserAlreadyExists => write!(f, "User already exists"),
             Error::InternalServerError => write!(f, "Internal server error"),
             Error::LoginFail=>write!(f,"login failed")
@@ -36,6 +35,9 @@ impl IntoResponse for Error {
         match self {
             Error::LoginFail => {
                 (StatusCode::UNAUTHORIZED, "Login Fail").into_response()
+            }
+            Error::UserIsNotAdmin=>{
+                (StatusCode::BAD_REQUEST, "User is not a admin or doest exists").into_response()
             }
             
             Error::UserAlreadyExists => {
