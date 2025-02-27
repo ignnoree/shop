@@ -24,12 +24,10 @@ pub fn routes(pool:SqlitePool) -> Router {
     Router::new().route("/api/refresh", post(refresh_token.layer(Extension(pool.clone()))))
 }
 
-
 #[derive(Deserialize)]
 struct RefreshRequest {
     token: String,
 }
-
 
 async fn refresh_token(Extension(pool): Extension<SqlitePool>,Json(payload): Json<RefreshRequest>) -> Response {
     let secret = b"secret";

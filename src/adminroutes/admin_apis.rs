@@ -28,6 +28,43 @@ pub fn admin_routes(pool:SqlitePool) -> Router {
     .layer(Extension(pool.clone()))
 }
 
+async fn check_headadmin(header:HeaderMap,Extension(pool):Extension<SqlitePool>)->Result<String,Error>{
+    let idenity=get_jwt_identity(header)
+    .await
+    .map_err(|_| Error::Unauthorized)?;
+
+    let user_id= idenity.get("user_id")
+    .and_then(|v|v.as_i64())
+    .ok_or(Error::Unauthorized)?;
+
+    let check_role = sqlx::query!("select role from admins where user_id =?",user_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|_| Error::InternalServerError)?;
+
+    let role = check_role.role;
+
+    match role{
+        Some(role)=>{
+            if role=="HeadAdmin"{
+                return Ok("HeadAdmin".to_string());
+            }
+            return  Err(Error::Unauthorized);
+        }
+        None=>Err(Error::Unauthorized)
+    }
+
+
+
+
+    
+
+    
+
+
+}
+
+
 
 async fn check_admin(header:HeaderMap)->Result<String,Error>{
     let idenity=get_jwt_identity(header)
@@ -37,6 +74,7 @@ async fn check_admin(header:HeaderMap)->Result<String,Error>{
     let role= idenity.get("role")
     .and_then(|v|v.as_str())
     .ok_or(Error::Unauthorized)?;
+    
 
     if role == "admin"{
         return Ok(role.to_string())
@@ -61,29 +99,35 @@ struct DeleteAdmin{
 
 async fn delete_admin(header:HeaderMap,Extension(pool):Extension<SqlitePool>,payload:Json<Username>)
 ->Result<Json<Value>,Error>{
-    let idenity=check_admin(header).await?;
-    if idenity != "admin"{
+    let idenity=check_headadmin(header,Extension(pool.clone())).await?;
+    if idenity != "HeadAdmin"{
         return Err(Error::Unauthorized);
     }
     let username = &payload.username;
 
-    let check_role =sqlx::query!("select role from admins where user_id = (select userid from users where username = ?)",username)
+
+    let check_pointed_admin_role =sqlx::query!("select role from admins where user_id = (select userid from users where username = ?)",username)
     .fetch_one(&pool)
     .await
     .map_err(|_| Error::InternalServerError)?;
 
-    let role = check_role.role;
+
+    let role = check_pointed_admin_role.role;
     match role{
         Some(role)=>{
 
-            if role == "admin"{
+            if role == "HeadAdmin"{
+                println!("{}",role);
                 return Err(Error::Unauthorized);
             }
-            sqlx::query!("delete from admins where user_id = (select userid from users where username = ?)",username)
+            else if role =="admin"{
+                 sqlx::query!("delete from admins where user_id = (select userid from users where username = ?)",username)
             .execute(&pool)
             .await
             .map_err(|_| Error::InternalServerError)?;
-            return Ok(Json(json!({"msg":"admin removed"})))   
+            return Ok(Json(json!({"msg":"admin removed"}))) 
+            }
+            return  Err(Error::UserIsNotAdmin)
         }
         None=>{
             Err(Error::UserIsNotAdmin)
@@ -241,6 +285,7 @@ async fn delete_user(header:HeaderMap,Extension(pool):Extension<SqlitePool>, pay
 async fn add_admin(header:HeaderMap,Extension(pool):Extension<SqlitePool>,payload: Json<Username>)
 ->Result<Json<Value>,Error>{
     let res= check_admin(header).await?;
+    println!("{}",res);
 
     let new_admin_username=&payload.username;
 
